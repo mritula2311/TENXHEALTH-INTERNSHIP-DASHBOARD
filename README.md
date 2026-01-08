@@ -476,15 +476,6 @@ Edit the n8n workflow nodes:
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
-
-This project is licensed under the MIT License.
-
-## 👥 Authors
-
-- Dashboard & Integration: Your Team
-- n8n Workflows: Automated Energy Monitoring Team
-
 ## 🙏 Acknowledgments
 
 - n8n for the automation platform
@@ -501,5 +492,3 @@ For issues and questions:
 4. Review server logs for backend errors
 
 ---
-
-**Built with ❤️ using React, Node.js, n8n, and OpenAI**
