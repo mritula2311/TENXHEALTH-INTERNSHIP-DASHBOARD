@@ -14,7 +14,8 @@
 // Configuration
 const dataService = require('./dataService');
 const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/energy-data';
-const SEND_INTERVAL = 30000; // 30 seconds
+const DASHBOARD_API_URL = process.env.DASHBOARD_API_URL || 'http://localhost:3000/api/energy/hourly';
+const SEND_INTERVAL = 300000; // 5 minutes (300000ms)
 
 // Only 2 equipment systems
 const EQUIPMENT_LIST = ['MFM 1', 'MFM 2'];
@@ -58,13 +59,11 @@ function generateEnergyData(forceBreach = false) {
 }
 
 /**
- * Send energy data to n8n webhook
+ * Send energy data to dashboard API
  */
-async function sendToN8n(data) {
-    console.log(`[${new Date().toISOString()}] Sending: ${data.equipment} | ${data.consumption} kWh`);
-
+async function sendToDashboard(data) {
     try {
-        const response = await fetch(N8N_WEBHOOK_URL, {
+        const response = await fetch(DASHBOARD_API_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -73,11 +72,44 @@ async function sendToN8n(data) {
         });
 
         if (!response.ok) {
-            console.log(`   ❌ Error: ${response.status}`);
+            console.log(`   ❌ Dashboard Error: ${response.status}`);
             return { success: false, error: `Status ${response.status}` };
         }
 
-        // Success - say nothing extra
+        return { success: true };
+
+    } catch (error) {
+        console.log(`   ❌ Dashboard Failed: ${error.message}`);
+        return { success: false, error: error.message };
+    }
+}
+
+/**
+ * Send energy data to both n8n webhook AND dashboard
+ */
+async function sendToN8n(data) {
+    console.log(`[${new Date().toISOString()}] Sending: ${data.equipment} | ${data.consumption} kWh`);
+
+    try {
+        // Send to n8n webhook
+        const n8nResponse = await fetch(N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(data)
+        });
+
+        if (!n8nResponse.ok) {
+            console.log(`   ❌ n8n Error: ${n8nResponse.status}`);
+        } else {
+            console.log(`   ✓ Sent to n8n`);
+        }
+
+        // Send to dashboard API
+        await sendToDashboard(data);
+        console.log(`   ✓ Sent to Dashboard`);
+
         return { success: true };
 
     } catch (error) {
@@ -99,12 +131,26 @@ async function main() {
     console.log('║   Energy Data Sender for n8n Automation   ║');
     console.log('╠═══════════════════════════════════════════╣');
     console.log('║   Equipment: MFM 1, MFM 2                 ║');
-    console.log('║   Mode: Cyclic Reporting (Every 30s)      ║');
+    console.log('║   Mode: Cyclic Reporting (Every 5 min)    ║');
+    console.log('║   Sends to: Dashboard + n8n Webhook       ║');
     console.log('╚═══════════════════════════════════════════╝');
 
     if (breachMode) {
         console.log('\n🚨 BREACH MODE: Forcing high consumption value');
         const data = generateEnergyData(true);
+        await sendToN8n(data);
+        return;
+    }
+
+    const failureMode = args.includes('--failure');
+    if (failureMode) {
+        console.log('\n⚠️ FAILURE MODE: Simulating Device Offline (0 kWh)');
+        const deviceName = EQUIPMENT_LIST[Math.floor(Math.random() * EQUIPMENT_LIST.length)];
+        const data = {
+            equipment: deviceName,
+            consumption: 0,
+            timestamp: new Date().toISOString()
+        };
         await sendToN8n(data);
         return;
     }

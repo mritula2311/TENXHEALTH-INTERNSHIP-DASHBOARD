@@ -100,3 +100,14 @@ export const getN8nConfig = async () => {
         return { isConfigured: false };
     }
 };
+
+// Fetch persisted tickets from backend
+export const fetchTickets = async () => {
+    try {
+        const response = await axios.get(`${API_BASE}/api/tickets`);
+        return response.data || [];
+    } catch (error) {
+        console.error("Failed to fetch tickets", error);
+        return [];
+    }
+};

@@ -1,0 +1,478 @@
+{
+    "name": "Energy Monitoring & Ticket Management",
+    "nodes": [
+        {
+            "parameters": {
+                "jsCode": "// ═══════════════════════════════════════════════════════\n// THRESHOLD ANALYZER (ROBUST VERSION)\n// Acceptable Range: 10-17 kWh\n// Above 17 kWh = BREACH (requires manual check)\n// 0 kWh = DEVICE FAILURE (requires immediate attention)\n// ═══════════════════════════════════════════════════════\n\nconst THRESHOLD_MIN = 10;\nconst THRESHOLD_MAX = 17;\n\nconst input = $input.all();\nconst results = [];\n\nfor (const item of input) {\n  // 1. ROBUST INPUT PARSING\n  // Handle both flat JSON (direct) and nested 'body' (webhook)\n  const data = item.json.body || item.json;\n\n  // 2. EXTRACT VALUES\n  const consumption = Number(data.consumption);\n  const equipment = data.equipment || 'Unknown';\n  const timestamp = data.timestamp || new Date().toISOString();\n  const hour = new Date(timestamp).getHours();\n  \n  // 3. DETERMINE BREACH & FAILURE\n  let thresholdBreach = false;\n  let isFailure = false;\n  let status = 'NORMAL';\n\n  if (consumption === 0) {\n      isFailure = true;\n      thresholdBreach = true; // Force breach flow\n      status = 'DEVICE_FAILURE';\n  } else if (consumption > THRESHOLD_MAX) {\n      thresholdBreach = true;\n      status = 'BREACH';\n  }\n  \n  // 4. SET SEVERITY\n  let severity = 'OK';\n  if (isFailure) {\n      severity = 'CRITICAL';\n  } else if (thresholdBreach) {\n      severity = consumption > 20 ? 'CRITICAL' : 'WARNING';\n  }\n\n  // 5. CALCULATE DEVIATION\n  const deviationPercent = thresholdBreach && !isFailure \n    ? Number(((consumption - THRESHOLD_MAX) / THRESHOLD_MAX * 100).toFixed(2))\n    : 0;\n  \n  // 6. OUTPUT ENRICHED DATA\n  results.push({\n    json: {\n      equipment,\n      consumption,\n      timestamp,\n      hour,\n      thresholdMin: THRESHOLD_MIN,\n      thresholdMax: THRESHOLD_MAX,\n      // IMPORTANT: This boolean triggers the AI Flow\n      thresholdBreach,\n      isFailure,\n      status,\n      severity,\n      deviationPercent\n    }\n  });\n}\n\nreturn results;"
+            },
+            "id": "276532fe-7d97-4a2a-9229-45e920ff25ae",
+            "name": "Check Threshold (10-17 kWh)",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                420,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": {
+                        "caseSensitive": true,
+                        "leftValue": "",
+                        "typeValidation": "strict",
+                        "version": 1
+                    },
+                    "conditions": [
+                        {
+                            "id": "check-breach",
+                            "leftValue": "={{ $json.thresholdBreach }}",
+                            "rightValue": true,
+                            "operator": {
+                                "type": "boolean",
+                                "operation": "equals"
+                            }
+                        }
+                    ],
+                    "combinator": "and"
+                },
+                "options": {}
+            },
+            "id": "d26b41de-befc-4f9b-a7f6-041210624612",
+            "name": "Threshold Exceeded?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [
+                640,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4o-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4O-MINI"
+                },
+                "messages": {
+                    "values": [
+                        {
+                            "content": "=You are an energy monitoring system. Analyze the data and write a ticket.\n\nDATA:\n- Equipment: {{ $json.equipment }}\n- Consumption: {{ $json.consumption }} kWh\n- Threshold: {{ $json.thresholdMin }}-{{ $json.thresholdMax }} kWh\n- Status: {{ $json.status }}\n- Severity: {{ $json.severity }}\n\nINSTRUCTIONS:\n1. IF Consumption is 0 OR Status is 'DEVICE_FAILURE':\n   - This is a CRITICAL DEVICE FAILURE.\n   - Ticket Title: \"CRITICAL: {{ $json.equipment }} is Offline/Not Working\"\n   - Ticket Description: \"The device {{ $json.equipment }} has stopped reporting valid consumption (0 kWh). Unscheduled downtime detected. Immediate field inspection required.\"\n   - Email Subject: \"URGENT: {{ $json.equipment }} Failure Alert\"\n   - Email Body: \"Warning, \\n\\n{{ $json.equipment }} appears to be offline or malfunctioning. Consumption is 0 kWh. Please dispatch a technician immediately.\"\n\n2. IF Consumption > {{ $json.thresholdMax }}:\n   - This is a THRESHOLD BREACH.\n   - Ticket Title: \"High Consumption Alert: {{ $json.equipment }}\"\n   - Ticket Description: \"Device is consuming {{ $json.consumption }} kWh, which is {{ $json.deviationPercent }}% above the limit of {{ $json.thresholdMax }} kWh. Check for load anomalies.\"\n   - Email Subject: \"Warning: High Energy Usage on {{ $json.equipment }}\"\n   - Email Body: \"Alert,\\n\\n{{ $json.equipment }} has exceeded defined energy thresholds. Current usage: {{ $json.consumption }} kWh.\"\n\nRespond in this EXACT JSON format (no markdown):\n{\n  \"ticketTitle\": \"...\",\n  \"ticketDescription\": \"...\",\n  \"emailSubject\": \"...\",\n  \"emailBody\": \"...\"\n}"
+                        }
+                    ]
+                },
+                "options": {
+                    "maxTokens": 500,
+                    "temperature": 0.3
+                }
+            },
+            "id": "c36d1542-00fb-4a13-886e-484600676068",
+            "name": "AI: Generate Ticket & Email",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.8,
+            "position": [
+                860,
+                200
+            ],
+            "credentials": {
+                "openAiApi": {
+                    "id": "CyaGzW81kgoHjQcF",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.all();\nconst results = [];\nconst energyItems = $('Threshold Exceeded?').all();\n\nfor (let i = 0; i < input.length; i++) {\n  const item = input[i];\n  const energyData = (energyItems[i] || energyItems[0]).json;\n  const aiText = item.json.message?.content || item.json.text || '{}';\n  \n  let aiContent;\n  try {\n    const jsonMatch = aiText.match(/\\{[\\s\\S]*\\}/);\n    aiContent = jsonMatch ? JSON.parse(jsonMatch[0]) : {};\n  } catch (e) {\n    aiContent = {};\n  }\n  \n  const now = new Date();\n  const ticketId = `T-${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}-${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}`;\n  \n  results.push({\n    json: {\n      ...energyData,\n      ticketId,\n      ticketTitle: aiContent.ticketTitle || `⚠️ THRESHOLD EXCEEDED - ${energyData.equipment}`,\n      ticketDescription: aiContent.ticketDescription || 'APPLICATION MUST BE CHECKED MANUALLY',\n      emailSubject: aiContent.emailSubject || `⚠️ Energy Threshold Warning - ${energyData.equipment}`,\n      emailBody: aiContent.emailBody || `Energy consumption exceeded on ${energyData.equipment}. Please check manually.`\n    }\n  });\n}\nreturn results;"
+            },
+            "id": "232b3af8-3603-40a7-8e0e-c5cf8762b20f",
+            "name": "Parse AI Content",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1080,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "fromEmail": "tenxhealthinterns@gmail.com",
+                "toEmail": "mritulashankar@gmail.com",
+                "subject": "={{ $json.emailSubject }}",
+                "emailFormat": "text",
+                "text": "={{ $json.emailBody }}",
+                "options": {}
+            },
+            "id": "c5c44a5f-cc8e-4e46-bce4-0b4374fe8c75",
+            "name": "Send Warning Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                1300,
+                100
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "9oyJLFUmOtWz2w2r",
+                    "name": "SMTP account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://localhost:3000/webhook/ticket",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"ticketId\": \"{{ $json.ticketId }}\",\n  \"subject\": \"{{ $json.ticketTitle }}\",\n  \"description\": {{ JSON.stringify($json.ticketDescription) }},\n  \"status\": \"open\",\n  \"priority\": \"{{ $json.severity === 'CRITICAL' ? 'critical' : 'high' }}\",\n  \"alertType\": \"{{ $json.status }}\",\n  \"equipment\": \"{{ $json.equipment }}\",\n  \"consumption\": {{ $json.consumption }},\n  \"expected\": {{ $json.thresholdMax }},\n  \"thresholdBreach\": true,\n  \"requiresManualCheck\": true,\n  \"source\": \"automated\"\n}",
+                "options": {}
+            },
+            "id": "ec3a0561-9450-4ddd-868d-953fe6e77dca",
+            "name": "Raise Ticket on Dashboard",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1300,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Return success response for breach\nconst item = $input.first();\n\nreturn [{\n  json: {\n    success: true,\n    status: 'BREACH',\n    message: 'Threshold exceeded! Ticket raised and email sent.',\n    ticketId: item.json.ticketId,\n    emailSent: true,\n    equipment: item.json.equipment,\n    consumption: item.json.consumption\n  }\n}];"
+            },
+            "id": "8aba99e1-57ad-4b49-98fc-8e2b61b01932",
+            "name": "Response - Breach Handled",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1520,
+                200
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "// Return response for normal reading\nconst item = $input.first();\n\nreturn [{\n  json: {\n    success: true,\n    status: 'NORMAL',\n    message: 'Consumption within threshold',\n    equipment: item.json.equipment,\n    consumption: item.json.consumption,\n    threshold: `${item.json.thresholdMin}-${item.json.thresholdMax} kWh`\n  }\n}];"
+            },
+            "id": "8e00934a-f1b5-4b47-9fd2-5855682d159c",
+            "name": "Response - Normal",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                860,
+                400
+            ]
+        },
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "energy-data",
+                "responseMode": "lastNode",
+                "options": {}
+            },
+            "id": "1273d7af-8ba1-4d7e-8c05-78de07daeb4c",
+            "name": "Receive Energy Data",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                200,
+                300
+            ],
+            "webhookId": "energy-data-webhook-v3"
+        },
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "ticket-submit",
+                "responseMode": "lastNode",
+                "options": {}
+            },
+            "id": "webhook-manual-ticket",
+            "name": "Receive Manual Ticket",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [
+                200,
+                700
+            ],
+            "webhookId": "manual-ticket-webhook"
+        },
+        {
+            "parameters": {
+                "modelId": {
+                    "__rl": true,
+                    "value": "gpt-4o-mini",
+                    "mode": "list",
+                    "cachedResultName": "GPT-4O-MINI"
+                },
+                "messages": {
+                    "values": [
+                        {
+                            "content": "=You are an AI assistant helping to enhance support tickets.\n\nOriginal Ticket:\n- Subject: {{ $json.subject }}\n- Description: {{ $json.description }}\n- Priority: {{ $json.priority }}\n\nPlease:\n1. Analyze the ticket and provide helpful context\n2. Suggest potential root causes\n3. Recommend immediate actions\n\nRespond in JSON format:\n{\n  \"enhancedDescription\": \"Enhanced description with technical details\",\n  \"suggestedActions\": \"Recommended immediate actions\",\n  \"potentialCauses\": \"Likely root causes\",\n  \"emailBody\": \"Professional email body for notification\"\n}"
+                        }
+                    ]
+                },
+                "options": {
+                    "maxTokens": 400,
+                    "temperature": 0.3
+                }
+            },
+            "id": "ai-enhance-ticket",
+            "name": "AI: Enhance Manual Ticket",
+            "type": "@n8n/n8n-nodes-langchain.openAi",
+            "typeVersion": 1.8,
+            "position": [
+                420,
+                700
+            ],
+            "credentials": {
+                "openAiApi": {
+                    "id": "CyaGzW81kgoHjQcF",
+                    "name": "OpenAi account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "jsCode": "const input = $input.all();\nconst results = [];\nconst ticketData = $('Receive Manual Ticket').all()[0].json;\n\nfor (const item of input) {\n  const aiText = item.json.message?.content || item.json.text || '{}';\n  \n  let aiContent;\n  try {\n    const jsonMatch = aiText.match(/\\{[\\s\\S]*\\}/);\n    aiContent = jsonMatch ? JSON.parse(jsonMatch[0]) : {};\n  } catch (e) {\n    aiContent = {};\n  }\n  \n  results.push({\n    json: {\n      ...ticketData,\n      aiEnhanced: true,\n      enhancedDescription: aiContent.enhancedDescription || ticketData.description,\n      suggestedActions: aiContent.suggestedActions || 'Review manually',\n      potentialCauses: aiContent.potentialCauses || 'Unknown',\n      emailBody: aiContent.emailBody || `New ticket raised: ${ticketData.subject}`\n    }\n  });\n}\nreturn results;"
+            },
+            "id": "parse-ai-response",
+            "name": "Parse Manual Ticket AI Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                640,
+                700
+            ]
+        },
+        {
+            "parameters": {
+                "fromEmail": "tenxhealthinterns@gmail.com",
+                "toEmail": "mritulashankar@gmail.com",
+                "subject": "=🎫 New Ticket: {{ $json.subject }}",
+                "emailFormat": "text",
+                "text": "={{ $json.emailBody }}",
+                "options": {}
+            },
+            "id": "send-notification-email",
+            "name": "Send Manual Ticket Email",
+            "type": "n8n-nodes-base.emailSend",
+            "typeVersion": 2.1,
+            "position": [
+                860,
+                600
+            ],
+            "credentials": {
+                "smtp": {
+                    "id": "9oyJLFUmOtWz2w2r",
+                    "name": "SMTP account"
+                }
+            }
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://localhost:3000/webhook/ticket",
+                "sendHeaders": true,
+                "headerParameters": {
+                    "parameters": [
+                        {
+                            "name": "Content-Type",
+                            "value": "application/json"
+                        }
+                    ]
+                },
+                "sendBody": true,
+                "specifyBody": "json",
+                "jsonBody": "={\n  \"ticketId\": \"{{ $json.id }}\",\n  \"subject\": \"{{ $json.subject }}\",\n  \"description\": {{ JSON.stringify($json.enhancedDescription) }},\n  \"status\": \"{{ $json.status }}\",\n  \"priority\": \"{{ $json.priority }}\",\n  \"aiEnhanced\": true,\n  \"suggestedActions\": {{ JSON.stringify($json.suggestedActions) }},\n  \"potentialCauses\": {{ JSON.stringify($json.potentialCauses) }},\n  \"source\": \"manual\",\n  \"timestamp\": \"{{ $json.timestamp }}\"\n}",
+                "options": {}
+            },
+            "id": "post-to-dashboard",
+            "name": "Post Enhanced Manual Ticket",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                860,
+                800
+            ]
+        },
+        {
+            "parameters": {
+                "jsCode": "const item = $input.first();\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Ticket processed and enhanced by AI',\n    ticketId: item.json.id,\n    aiEnhanced: true\n  }\n}];"
+            },
+            "id": "response-success",
+            "name": "Response - Manual Ticket Success",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1080,
+                700
+            ]
+        }
+    ],
+    "connections": {
+        "Receive Energy Data": {
+            "main": [
+                [
+                    {
+                        "node": "Check Threshold (10-17 kWh)",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Check Threshold (10-17 kWh)": {
+            "main": [
+                [
+                    {
+                        "node": "Threshold Exceeded?",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Threshold Exceeded?": {
+            "main": [
+                [
+                    {
+                        "node": "AI: Generate Ticket & Email",
+                        "type": "main",
+                        "index": 0
+                    }
+                ],
+                [
+                    {
+                        "node": "Response - Normal",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI: Generate Ticket & Email": {
+            "main": [
+                [
+                    {
+                        "node": "Parse AI Content",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse AI Content": {
+            "main": [
+                [
+                    {
+                        "node": "Send Warning Email",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Raise Ticket on Dashboard",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Warning Email": {
+            "main": [
+                [
+                    {
+                        "node": "Response - Breach Handled",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Raise Ticket on Dashboard": {
+            "main": [
+                [
+                    {
+                        "node": "Response - Breach Handled",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Receive Manual Ticket": {
+            "main": [
+                [
+                    {
+                        "node": "AI: Enhance Manual Ticket",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "AI: Enhance Manual Ticket": {
+            "main": [
+                [
+                    {
+                        "node": "Parse Manual Ticket AI Response",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Parse Manual Ticket AI Response": {
+            "main": [
+                [
+                    {
+                        "node": "Send Manual Ticket Email",
+                        "type": "main",
+                        "index": 0
+                    },
+                    {
+                        "node": "Post Enhanced Manual Ticket",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Send Manual Ticket Email": {
+            "main": [
+                [
+                    {
+                        "node": "Response - Manual Ticket Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Post Enhanced Manual Ticket": {
+            "main": [
+                [
+                    {
+                        "node": "Response - Manual Ticket Success",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "pinData": {},
+    "meta": {
+        "templateCredsSetupCompleted": true,
+        "instanceId": "44b5edd81a02b8258ca3a0042caf07338318d20bf14c72f4e6588b40641ade52"
+    }
+}

@@ -141,6 +141,20 @@ app.get('/api/energy/hourly', (req, res) => {
     res.json([...d1, ...d2]);
 });
 
+// POST endpoint to receive incoming energy data from dummy sender
+app.post('/api/energy/hourly', (req, res) => {
+    console.log("Received energy data from dummy sender:", req.body);
+
+    // Broadcast to connected clients via Socket.IO
+    io.emit('energy-update', req.body);
+
+    res.json({
+        status: 'success',
+        message: 'Energy data received and broadcasted',
+        data: req.body
+    });
+});
+
 app.get('/api/energy/daily', (req, res) => {
     // Assuming daily is still handled by the other file or we aggregate
     const data = getDailyData();
@@ -191,6 +205,38 @@ app.post('/webhook', (req, res) => {
     res.json({ status: 'success', message: 'Update broadcasted' });
 });
 
+// --- Ticket Storage (In-Memory) ---
+let activeTickets = [];
+
+// --- Send data TO n8n ---
+
+// Get all execution tickets
+app.get('/api/tickets', (req, res) => {
+    res.json(activeTickets);
+});
+
+// Send energy alert to n8n for processing
+app.post('/api/n8n/energy-alert', async (req, res) => {
+    const alertData = {
+        type: 'energy_alert',
+        ...req.body
+    };
+
+    const result = await sendToN8n(config.n8n.webhooks.energyAlert, alertData);
+    res.json(result);
+});
+
+// Submit ticket to n8n for automation/processing
+app.post('/api/n8n/submit-ticket', async (req, res) => {
+    const ticketData = {
+        type: 'ticket_submission',
+        ...req.body
+    };
+
+    const result = await sendToN8n(config.n8n.webhooks.ticketSubmit, ticketData);
+    res.json(result);
+});
+
 // Specific endpoint for n8n to create tickets
 app.post('/webhook/ticket', (req, res) => {
     console.log("Received ticket from n8n:", req.body);
@@ -203,24 +249,18 @@ app.post('/webhook/ticket', (req, res) => {
         priority: req.body.priority || 'medium',
         isAiGenerated: true,
         source: 'n8n',
+        alertType: req.body.alertType,
         timestamp: new Date().toISOString()
     };
 
+    // Persist in memory (keep last 50)
+    activeTickets.unshift(ticketData);
+    if (activeTickets.length > 50) {
+        activeTickets = activeTickets.slice(0, 50);
+    }
+
     io.emit('n8n-update', ticketData);
     res.json({ status: 'success', ticket: ticketData });
-});
-
-// --- Send data TO n8n ---
-
-// Send energy alert to n8n for processing
-app.post('/api/n8n/energy-alert', async (req, res) => {
-    const alertData = {
-        type: 'energy_alert',
-        ...req.body
-    };
-
-    const result = await sendToN8n(config.n8n.webhooks.energyAlert, alertData);
-    res.json(result);
 });
 
 // Submit ticket to n8n for automation/processing

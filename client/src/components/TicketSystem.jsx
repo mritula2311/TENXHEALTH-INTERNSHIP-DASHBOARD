@@ -3,15 +3,47 @@ import { Send, AlertCircle, CheckCircle, Clock, MessageSquare, Zap, AlertTriangl
 import { raiseTicket } from '../api';
 
 const TicketSystem = ({ socket }) => {
-    const [tickets, setTickets] = useState([
-        { id: 'T-101', subject: 'High Voltage Warning', description: 'Voltage exceeded 240V on MFM 1', status: 'resolved', priority: 'high', timestamp: '2025-12-30 14:20' },
-        { id: 'T-102', subject: 'Data Sync Error', description: 'Missing hourly data for 2pm', status: 'pending', priority: 'medium', timestamp: '2025-12-31 09:15' }
-    ]);
+    const [tickets, setTickets] = useState([]);
 
     const [formData, setFormData] = useState({ subject: '', description: '', priority: 'medium' });
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
+        // Fetch persisted tickets on mount
+        const loadTickets = async () => {
+            // Dynamic import to avoid potential circular dep if api imports this (unlikely but safe)
+            const { fetchTickets } = await import('../api');
+            const existing = await fetchTickets();
+            if (existing && existing.length > 0) {
+                setTickets(prev => {
+                    // Merge with dummy initial state if needed, or replace. 
+                    // Let's replace the dummy ones with real ones if real ones exist, 
+                    // but maybe keep the dummy ones for demo purposes if real list is empty?
+                    // Request implies "WHERE IS TICKET RAISED", so they want to see the real one.
+                    // Filter out duplicates if any match by ID.
+                    const uniqueExisting = existing.filter(e => !prev.some(p => p.id === e.ticketId));
+
+                    // Transform API format to Component state format if needed
+                    const mappedExisting = uniqueExisting.map(t => ({
+                        id: t.ticketId,
+                        subject: t.subject,
+                        description: t.description,
+                        status: t.status,
+                        priority: t.priority,
+                        timestamp: t.timestamp,
+                        isAiGenerated: t.isAiGenerated,
+                        source: t.source,
+                        equipment: t.equipment,
+                        alertType: t.alertType,
+                        consumption: t.consumption
+                    }));
+
+                    return [...mappedExisting, ...prev];
+                });
+            }
+        };
+        loadTickets();
+
         if (!socket) return;
 
         socket.on('n8n-update', (data) => {
@@ -157,6 +189,13 @@ const TicketSystem = ({ socket }) => {
             <div className="glass-panel lg:col-span-2">
                 <h2 className="text-xl font-bold mb-6">Recent Tickets & AI Updates</h2>
                 <div className="flex flex-col gap-4 max-h-[600px] overflow-y-auto">
+                    {tickets.length === 0 && (
+                        <div className="text-center p-8 text-secondary border border-dashed border-white/10 rounded-lg">
+                            <CheckCircle className="mx-auto mb-2 opacity-50" size={32} />
+                            <p>No active tickets found.</p>
+                            <p className="text-xs mt-1">AI monitors system 24/7 for anomalies.</p>
+                        </div>
+                    )}
                     {tickets.map(ticket => (
                         <div key={ticket.id} className="ticket-item hover:bg-white/5 p-4 rounded-lg transition-colors border border-white/10">
                             <div className="flex justify-between items-start mb-2">

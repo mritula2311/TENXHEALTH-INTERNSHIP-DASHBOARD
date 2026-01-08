@@ -10,7 +10,7 @@ const ConsumptionGraph = ({ data, stats }) => {
             {/* Stats Overlay integrated if stats provided */}
             {stats && <StatisticsOverlay stats={stats} unit="kWh" />}
 
-            <div className="w-full h-96 mt-4">
+            <div style={{ width: '100%', height: 400, marginTop: '16px' }}>
                 <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                         <defs>

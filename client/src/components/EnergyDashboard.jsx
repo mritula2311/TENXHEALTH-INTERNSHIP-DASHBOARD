@@ -1,12 +1,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import {
-    LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-    BarChart, Bar, Legend, AreaChart, Area, PieChart, Pie, Cell, ReferenceLine, ReferenceArea
-} from 'recharts';
-import { Zap, Activity, Sun, Moon, RefreshCw } from 'lucide-react';
+import { Zap, Activity, Sun, Moon } from 'lucide-react';
 import StatisticsOverlay from './StatisticsOverlay';
 import ConsumptionBreakdown from './ConsumptionBreakdown';
 import ConsumptionGraph from './ConsumptionGraph';
+import TicketFeed from './TicketFeed';
 import { fetchStatistics, fetchDeviceHistory } from '../api';
 
 const StatCard = ({ title, value, subtext, icon: Icon, color }) => (
@@ -24,7 +21,15 @@ const StatCard = ({ title, value, subtext, icon: Icon, color }) => (
     </div>
 );
 
+import MorningEveningChart from './PredictionChart'; // Re-using file for now, but component is renamed
+
 const EnergyDashboard = ({ hourlyData = [], dailyData = [] }) => {
+    // ... existing ... 
+
+    // ... (down to usage) ...
+
+
+    // ... (existing state and simple effects) ...
     const [stats, setStats] = useState(null);
     const [selectedDevice, setSelectedDevice] = useState('1');
     const [deviceHistory, setDeviceHistory] = useState([]);
@@ -74,7 +79,10 @@ const EnergyDashboard = ({ hourlyData = [], dailyData = [] }) => {
                 return {
                     time: timePart ? timePart.substring(0, 5) : '',
                     value: Number(d.totalKwH) || 0,
-                    demand: Number(d.maxDemand) || 0
+                    demand: Number(d.maxDemand) || 0,
+                    // Pass full date for prediction chart to parse if needed, usually just needed in parent
+                    date: d.date,
+                    maxKwH: d.totalKwH // Ensure compatibility with Prediction logic
                 };
             }).filter(d => d !== null).slice(-50); // Show last 50 points for clarity
         } catch (e) {
@@ -199,10 +207,17 @@ const EnergyDashboard = ({ hourlyData = [], dailyData = [] }) => {
             {/* Main Content Grid - Flexible Layout */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
                 {/* Detailed Breakdown Card */}
-                <div className="lg:col-span-1">
+                <div className="lg:col-span-1 flex flex-col gap-6">
                     <ConsumptionBreakdown
                         totalConsumption={Number(totalConsumption)}
                         averageConsumption={deviceStats?.consumption?.avg || 0}
+                    />
+                    {/* NEW: Morning & Evening Chart in the sidebar column */}
+                    <MorningEveningChart
+                        // Use calculated timeOfDayData values if available, else fallback to data prop logic
+                        morningLoad={timeOfDayData[0]?.value}
+                        eveningLoad={timeOfDayData[1]?.value}
+                        data={deviceHistory && deviceHistory.length > 0 ? deviceHistory : (hourlyData || [])}
                     />
                 </div>
 
@@ -212,6 +227,13 @@ const EnergyDashboard = ({ hourlyData = [], dailyData = [] }) => {
                         data={chartData}
                         stats={deviceStats?.consumption}
                     />
+                </div>
+            </div>
+
+            {/* AI Ticket Feed Section */}
+            <div className="grid grid-cols-1 mb-8">
+                <div className="h-96">
+                    <TicketFeed />
                 </div>
             </div>
         </div>
